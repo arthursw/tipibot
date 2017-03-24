@@ -1,22 +1,35 @@
+#include <Servo.h>
+
 int STEP_L = 5;
 int DIRECTION_L = 2;
 
 int STEP_R = 6;
 int DIRECTION_R = 3;
 
-int stepDuration = 750;
+int SERVO = 9;
+
+float machineWidth = 2000;
+float stepsPerRevolution = 200;
+float millimetersPerRevolution = 88;
+float millimetersPerStep = millimetersPerRevolution / stepsPerRevolution;
 
 float positionL = 0;
 float positionR = 0;
 
+float polarStepDistance = 1.0;
+
 const int serialBufferSize = 100;
 char serialBuffer[serialBufferSize];
+
+Servo servo;
 
 void setup() {
 	pinMode(STEP_L, OUTPUT);
 	pinMode(DIRECTION_L, OUTPUT);
 	pinMode(STEP_R, OUTPUT);
 	pinMode(DIRECTION_R, OUTPUT);
+
+	servo.attach(SERVO);
 
 	Serial.begin(115200);
 }
@@ -92,27 +105,31 @@ void loop() {
 					stop();
 					break;
 				case 4:
-					float penWidth = readFloat(serialBuffer, 'E', charExists);
+					// float penWidth = readFloat(serialBuffer, 'E', charExists);
+					// if(charExists) {
+					// 	setPenWidth(penWidth);
+					// }
+					float newMachineWidth = readFloat(serialBuffer, 'X', charExists);
 					if(charExists) {
-						setPenWidth(penWidth);
+						machineWidth = newMachineWidth;
 					}
-					float machineWidth = readFloat(serialBuffer, 'X', charExists);
+					float newStepsPerRevolution = readFloat(serialBuffer, 'S', charExists);
 					if(charExists) {
-						setMachineWidth(machineWidth);
+						stepsPerRevolution = newStepsPerRevolution;
 					}
-					float stepsPerRevolution = readFloat(serialBuffer, 'S', charExists);
+					float newMillimetersPerRevolution = readFloat(serialBuffer, 'P', charExists);
 					if(charExists) {
-						setStepsPerRevolution(stepsPerRevolution);
+						millimetersPerRevolution = newMillimetersPerRevolution;
 					}
-					float millimetersPerRevolution = readFloat(serialBuffer, 'P', charExists);
-					if(charExists) {
-						setMillimetersPerRevolution(millimetersPerRevolution);
-					}
+					millimetersPerStep = millimetersPerRevolution / stepsPerRevolution;
 					break;
 				case 340:
-					int servoID = readInt(serialBuffer, 'P');
-					int position = readInt(serialBuffer, 'S');
-					setServo(servoID, position);
+					float angle = readAngle(serialBuffer, 'S', charExists);
+					if(!charExists) {
+						Serial.println('Could not find S parameter');
+						return;
+					}
+					servo.write(angle);
 					break;
 			}
 			break;
@@ -165,8 +182,8 @@ void moveOnStepR(bool direction) {
 void moveToPolar(float l, float r) {
 	float deltaL = l - positionL;
 	float deltaR = y - positionY;
-	int nStepX = round(abs(deltaL) * unitToStep);
-	int nStepR = round(abs(deltaR) * unitToStep);
+	int nStepX = round(abs(deltaL) / millimetersPerStep);
+	int nStepR = round(abs(deltaR) / millimetersPerStep);
 
 	int directionL = deltaL >= 0 ? 1 : -1;
 	int directionR = deltaR >= 0 ? 1 : -1;
@@ -192,15 +209,15 @@ void moveToPolar(float l, float r) {
 	// }
 
 	int nStepMin = nStepL;
-	int nStepMaL = nStepR;
+	int nStepMax = nStepR;
 
 	if(nStepL > nStepR) {
 		nStepMin = nStepR;
-		nStepMaL = nStepL;
+		nStepMax = nStepL;
 	}
 
-	int nStepPerLoop = nStepMin > 0 ? nStepMaL / nStepMin : 0;
-	int nStepRemaining = nStepMaL - nStepPerLoop * nStepMin;
+	int nStepPerLoop = nStepMin > 0 ? nStepMax / nStepMin : 0;
+	int nStepRemaining = nStepMax - nStepPerLoop * nStepMin;
 	for(int i=0 ; i < nStepMin+1 ; i++) {
 		if(nStepL < nStepR) {
 			moveOneStepL(directionL);
@@ -219,9 +236,14 @@ void moveToPolar(float l, float r) {
     positionR = r;
 }
 
-float polarStepDistance = 1.0;
-float polarDistanceL = 0.0;
-float polarDistanceR = 0.0;
+void orthoToPolar(float x, float y, float* l, float* r) {
+	float x2 = x * x;
+	float y2 = y * y;
+	float WmX = machineWidth - x;
+	float WmX2 = WmX * WmX;
+	*l = sqrt(x2 + y2);
+	*r = sqrt(WmX2 + y2);
+}
 
 void moveTo(float x, float y) {
 
@@ -254,14 +276,17 @@ void moveTo(float x, float y) {
 			destinationX = x;
 			destinationY = y;
 		}
-		float destinationX2 = destinationX * destinationX;
-		float destinationY2 = destinationY * destinationY;
-		float WmX = machineWidth - destinationX;
-		float WmX2 = WmX * WmX;
-		float destinationL = sqrt(destinationX2 + destinationY2);
-		float destinationR = sqrt(WmX2 + destinationY2);
+		float destinationL = 0;
+		float destinationR = 0;
+		orthoToPolar(destinationX, destinationY, &destinationL, &destinationR);
 		moveToPolar(destinationL, destinationR);
 	}
     positionX = x;
     positionY = y;
+}
+
+void setPosition(float x, float y) {
+	positionX = x;
+    positionY = y;
+	orthoToPolar(x, y, &positionL, &positionR);
 }
