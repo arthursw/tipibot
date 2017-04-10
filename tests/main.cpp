@@ -1,17 +1,5 @@
-
 #include "mock_arduino.h"
-#include "Servo.h"
-
-float readFloat(char* buffer, const char c, bool* charExists);
-int readInt(char* buffer, const char c, bool* charExists);
-void setPosition(float x, float y);
-void moveToFast(float x, float y);
-void moveTo(float x, float y);
-void orthoToPolar(float x, float y, float* l, float* r);
-void moveToPolar(float l, float r);
-void moveOneStepR();
-void moveOneStepL();
-void moveOneStep(int stepPin, int duration);
+#include <Servo.h>
 
 int STEP_L = 5;
 int DIRECTION_L = 2;
@@ -19,82 +7,127 @@ int DIRECTION_L = 2;
 int STEP_R = 6;
 int DIRECTION_R = 3;
 
+int ENABLE = 8;
 int SERVO = 9;
 
 float machineWidth = 2000;
 float stepsPerRevolution = 200;
-float millimetersPerRevolution = 88;
+float millimetersPerRevolution = 96;
 float millimetersPerStep = millimetersPerRevolution / stepsPerRevolution;
+
+int sleepTimer = 0;
 
 float positionL = 0;
 float positionR = 0;
 float positionX = 0;
 float positionY = 0;
 
-float polarStepDistance = 1.0;
+float servoAngle = 0;
 
-const int serialBufferSize = 100;
-char serialBuffer[serialBufferSize];
+float polarStepDistance = 1.0;
 
 Servo servo;
 
+typedef enum {  IDLE, MOVE_DIRECT, MOVE_LINEAR, MOVE_PEN, WAIT, SET_POSITION, SETUP } Commands;
+typedef enum {  NONE, ACTION, SPECIAL } CommandTypes;
+
+Commands command = IDLE;
+CommandTypes commandType = NONE;
+
+bool commandReadyToStart = false;
+bool commandDone = true;
+
+char commandChar = '0';
+
+const unsigned int NUM_PARAMETERS = 7;
+float parameters[NUM_PARAMETERS];
+int parameterIndex = -1;
+
+float currentValue = 0.0;
+int nDecimals = 0;
+
+int motorStateL = 0;
+int motorStateR = 0;
+
+int motorTimerL = 0;
+int motorTimerR = 0;
+
+int motorStepLengthL = 0;
+int motorStepLengthR = 0;
+
+int motorNumStepsDoneL = 0;
+int motorNumStepsDoneR = 0;
+
+int motorNumStepsToDoL = 0;
+int motorNumStepsToDoR = 0;
+
+int motorDirectionL = 0;
+int motorDirectionR = 0;
+
+float targetX = 0;
+float targetY = 0;
+
+float subTargetX = 0;
+float subTargetY = 0;
+
+bool lastPolarStep = false;
+
 void setup();
+void orthoToPolar(float x, float y, float* l, float* r);
+void polarToOrtho(float l, float r, float* x, float* y);
+unsigned long getTime();
+int createTimer();
+void setTimer(int timerID, unsigned long delay);
+bool isTimerElapsed(int timerID, unsigned long currentTime);
+bool isTimerElapsed(int timerID);
+void setPosition(float x, float y);
+void processIncomingByte (const byte c);
+bool equals(float a, float b);
+void updateMotors();
+void updatePen();
+void setPolarTarget(float l, float r);
+void setTargetDirect(float x, float y);
+void setTarget(float x, float y);
+void readCommand();
+void startCommand();
+void executeCommand();
 void loop();
-void test();
+
+string testCommands = "G4 P0\nM340 P3 S0\nM340 P3 S1500\nG92 X1150.0512 Y1975.0\nG0 X1125.0 Y1900.0\nG1 X1025.0 Y1800.0\nG90\n";
+
+float testPositionL = 0;
+float testPositionR = 0;
+float testPositionX = 0;
+float testPositionY = 0;
+
+void digitalWrite(int pin, int value) {
+   if(pin == STEP_L && value == 0) {
+	   testPositionL += millimetersPerStep * motorDirectionL;
+   }
+   if(pin == STEP_R && value == 0) {
+	   testPositionR += millimetersPerStep * motorDirectionR;
+   }
+   if(pin == STEP_L || pin == STEP_R){
+		polarToOrtho(testPositionL, testPositionR, &testPositionX, &testPositionY);   
+   }
+}
 
 int main() {
+	
     setup();
-    test();
+	Serial.fakeFeed(testCommands);
+	for(int i=0 ; i<10000000 ; i++) {
+		loop();
+	}
     return 0;
 }
 
-void test() {
-
-	// "G4 P0\n";
-	// "M340 P3 S0\n";
-	// "G4 P0\n";
-	// "G4 P0\n";
-	// "M340 P3 S0\n";
-	// "G4 P0\n";
-	// "G4 P0\n";
-	// "M340 P3 S1500\n";
-	// "G4 P0\n";
-	// "G92 X1150.0 Y1975.0\n";
-	// "G0 X849.0 Y1860.0\n";
-	// "G0 X835.0 Y1717.0\n";
-	// "G90\n";
-	// "G4 P150\n";
-	// "M340 P3 S900\n";
-	// "G4 P0\n";
-	// "G0 X1407.0 Y2090.0\n";
-	// "G4 P150\n";
-	// "M340 P3 S1500\n";
-	// "G4 P0\n";
-	// "G4 P150\n";
-	// "M340 P3 S900\n";
-	// "G4 P0\n";
-	// "G4 P150\n";
-	// "M340 P3 S1500\n";
-	// "G4 P0\n";
-	// "G4 P150\n";
-	// "M340 P3 S900\n";
-	// "G4 P0\n";
-
-	strcpy(serialBuffer, "G4 P0\n");
-	loop();
-	strcpy(serialBuffer, "M340 P3 S0\n");
-	loop();
-	strcpy(serialBuffer, "M340 P3 S1500\n");
-	loop();
-	strcpy(serialBuffer, "G92 X1150.0 Y1975.0\n");
-	loop();
-	strcpy(serialBuffer, "G0 X1125.0 Y1900.0\n");
-	loop();
-	strcpy(serialBuffer, "G90\n");
-	loop();
-}
-
 void setup() {
+	commandReadyToStart = false;
+	commandDone = true;
+	
+	pinMode(ENABLE, OUTPUT);
+	digitalWrite(ENABLE, 0);
 
 	pinMode(STEP_L, OUTPUT);
 	pinMode(DIRECTION_L, OUTPUT);
@@ -105,255 +138,10 @@ void setup() {
 
 	Serial.begin(115200);
 	Serial.println("Tipibot ready.");
-}
 
-int loopCount = 0;
-
-void loop() {
-
-	if(loopCount == 0) {
-		Serial.println("loop");
-		loopCount++;
-	}
-
-	int byteCount = Serial.readBytesUntil('\n', serialBuffer, serialBufferSize);
-	if(byteCount == 0) {
-		//Serial.println("nothing to read...");
-		return;
-	}
-
-	loopCount = 0;
-	// Serial.print(serialBuffer);
-
-	int code = atoi(serialBuffer+1);
-	bool charExists = false;
-	float x = 0;
-	float y = 0;
-	float r = 0;
-	float newMachineWidth = 0;
-	float newStepsPerRevolution = 0;
-	float newMillimetersPerRevolution = 0;
-	float angle = 0;
-	int p = 0;
-	switch(serialBuffer[0]) {
-		case 'G':
-			// Serial.println("G");
-			if(code == 0 || code == 1 || code == 2 || code == 3 || code == 92) {
-				x = readFloat(serialBuffer, 'X', &charExists);
-				if(!charExists) {
-					Serial.println("Could not find X parameter");
-					return;
-				}
-				y = readFloat(serialBuffer, 'Y', &charExists);
-				if(!charExists) {
-					Serial.println("Could not find Y parameter");
-					return;
-				}
-				if(code == 2 || code == 3) {
-					r = readFloat(serialBuffer, 'R', &charExists);
-					if(!charExists) {
-						Serial.println("Could not find R parameter");
-						return;
-					}
-				}
-			}
-
-			switch(code) {
-				case 0:
-					// Serial.println("0");
-					moveToFast(x, y);
-					break;
-				case 1:
-					moveTo(x, y);
-					break;
-				// case 2:
-				// 	circleClockWise(x, y, r);
-				// 	break;
-				// case 3:
-				// 	circleCounterClockWise(x, y, r);
-				// 	break;
-				case 4:
-					p = readInt(serialBuffer, 'P', &charExists);
-					if(!charExists) {
-						Serial.println("Could not find P parameter");
-						return;
-					}
-					// wait(p);
-					delay(p);
-					break;
-				// case 21:
-				// 	setMillimeters();
-				// 	break;
-				// case 90:
-				// 	setAbsolutePosition();
-				// 	break;
-				// case 91:
-				// 	setRelativePosition();
-				// 	break;
-				case 92:
-					setPosition(x, y);
-					break;
-				default:
-					Serial.println("Unknown G gcode.");
-			}
-			break;
-		case 'M':
-			switch(code) {
-				case 1:
-					// stop();
-					break;
-				case 4:
-					// float penWidth = readFloat(serialBuffer, 'E', &charExists);
-					// if(charExists) {
-					// 	setPenWidth(penWidth);
-					// }
-					newMachineWidth = readFloat(serialBuffer, 'X', &charExists);
-					if(charExists) {
-						machineWidth = newMachineWidth;
-					}
-					newStepsPerRevolution = readFloat(serialBuffer, 'S', &charExists);
-					if(charExists) {
-						stepsPerRevolution = newStepsPerRevolution;
-					}
-					newMillimetersPerRevolution = readFloat(serialBuffer, 'P', &charExists);
-					if(charExists) {
-						millimetersPerRevolution = newMillimetersPerRevolution;
-					}
-					millimetersPerStep = millimetersPerRevolution / stepsPerRevolution;
-					break;
-				case 340:
-					angle = readFloat(serialBuffer, 'S', &charExists);
-					if(!charExists) {
-						Serial.println("Could not find S parameter");
-						return;
-					}
-					servo.write(angle);
-					break;
-				default:
-					Serial.println("Unknown M gcode.");
-			}
-			break;
-		default:
-			Serial.println("Unknown gcode.");
-	}
-	Serial.println("ok");
-}
-
-int readInt(char* buffer, const char c, bool* charExists) {
-	char* pch = strchr(buffer, c);
-	if(charExists != NULL) {
-		*charExists = pch != NULL;
-	}
-	if(pch != NULL) {
-		return atoi(pch+1);
-	} else {
-		return -1;
-	}
-}
-
-float readFloat(char* buffer, const char c, bool* charExists) {
-	char * pch = strchr(buffer, c);
-	if(charExists != NULL) {
-		*charExists = pch != NULL;
-	}
-	if(pch != NULL) {
-		return atof(pch+1);
-	} else {
-		return -1;
-	}
-}
-
-void moveOneStep(int stepPin, int duration) {
-	digitalWrite(stepPin, 1);
-	delay(duration/2.0f);
-	digitalWrite(stepPin, 0);
-	delay(duration/2.0f);
-}
-
-void setDirectionL(int direction) {
-	digitalWrite(DIRECTION_L, direction);
-}
-
-void setDirectionR(int direction) {
-	digitalWrite(DIRECTION_R, direction);
-}
-
-void moveOneStepL() {
-    moveOneStep(STEP_L, 2);
-}
-
-void moveOneStepR() {
-    moveOneStep(STEP_R, 2);
-}
-
-void moveToPolar(float l, float r) {
-	float deltaL = l - positionL;
-	float deltaR = r - positionR;
-	int nStepL = round(fabs(deltaL) / millimetersPerStep);
-	int nStepR = round(fabs(deltaR) / millimetersPerStep);
-
-	int directionL = deltaL >= 0 ? 1 : -1;
-	int directionR = deltaR >= 0 ? 1 : -1;
-	//
-	// if(nStepL <= nStepR) {
-	//   int nStepPerLoop = nStepL > 0 ? nStepR / nStepL : 0;
-	//   int nStepRemaining = nStepR - nStepPerLoop * nStepL;
-	//   for(int i=0 ; i < nStepL+1 ; i++) {
-	//     moveOneStepL();
-	//     for(int j=0 ; i < nStepL ? j < nStepPerLoop : nStepRemaining ; j++) {
-	//       moveOneStepR();
-	//     }
-	//   }
-	// } else {
-	//   int nStepPerLoop = nStepR > 0 ? nStepL / nStepR : 0;
-	//   int nStepRemaining = nStepL - nStepPerLoop * nStepR;
-	//   for(int i=0 ; i < nStepR+1 ; i++) {
-	//     moveOneStepR();
-	//     for(int j=0 ; i < nStepR ? j < nStepPerLoop : nStepRemaining ; j++) {
-	//       moveOneStepL();
-	//     }
-	//   }
-	// }
-
-	int nStepMin = nStepL;
-	int nStepMax = nStepR;
-
-	if(nStepL > nStepR) {
-		nStepMin = nStepR;
-		nStepMax = nStepL;
-	}
-
-	int nStepPerLoop = nStepMin > 0 ? nStepMax / nStepMin : 0;
-	int nStepRemaining = nStepMax - nStepPerLoop * nStepMin;
-
-	Serial.print("position: ");
-	Serial.print(positionL);
-	Serial.print(", ");
-	Serial.println(positionR);
-	Serial.print("nSteps: ");
-	Serial.print(nStepL);
-	Serial.print(", ");
-	Serial.println(nStepR);
-
-	setDirectionL(directionL);
-	setDirectionR(directionR);
-
-	for(int i=0 ; i < nStepMin ; i++) {
-		if(nStepL < nStepR) {
-			moveOneStepL();
-		} else {
-			moveOneStepR();
-		}
-		for(int j=0 ; i < nStepMin - 1 ? j < nStepPerLoop : j < nStepRemaining ; j++) {
-			if(nStepL < nStepR) {
-				moveOneStepR();
-			} else {
-				moveOneStepL();
-			}
-		}
-	}
-    positionL = l;
-    positionR = r;
+	motorTimerL = createTimer();
+	motorTimerR = createTimer();
+	sleepTimer = createTimer();
 }
 
 void orthoToPolar(float x, float y, float* l, float* r) {
@@ -365,57 +153,413 @@ void orthoToPolar(float x, float y, float* l, float* r) {
 	*r = sqrt(WmX2 + y2);
 }
 
-void moveTo(float x, float y) {
+void polarToOrtho(float l, float r, float* x, float* y) {
+	float l2 = l * l;
+	float r2 = r * r;
+	float w2 = machineWidth * machineWidth;
+	*x = (l2 - r2 + w2) / ( 2.0 * machineWidth );
+	float x2 = *x * *x;
+	*y = sqrt(l2 - x2);
+}
+
+const unsigned int NUM_TIMERS = 5;
+unsigned long timers[NUM_TIMERS];
+bool timerOverflows[NUM_TIMERS];
+int nTimers = 0;
+unsigned long lastTime = 0;
+
+unsigned long getTime() {
+	unsigned long currentTime = micros();
+	if(lastTime > currentTime) { 	// overflow!
+		for(int i=0 ; i<NUM_TIMERS ; i++) {
+			timerOverflows[i] = false;
+		}
+	}
+	lastTime = currentTime;
+	return currentTime;
+}
+
+int createTimer() {
+	if(nTimers >= NUM_TIMERS) {
+		return -1;
+	}
+	// initialize timers with overflow to prevent timeout when the timer is not set
+	timerOverflows[nTimers] = true;
+	return nTimers++;
+}
+
+void setTimer(int timerID, unsigned long delay) {
+	unsigned long currentTime = getTime();
+	timers[timerID] = currentTime + delay;
+	timerOverflows[timerID] = timers[timerID] < currentTime;
+}
+
+bool isTimerElapsed(int timerID, unsigned long currentTime) {
+	return !timerOverflows[timerID] && currentTime > timers[timerID];
+}
+
+bool isTimerElapsed(int timerID) {
+	unsigned long currentTime = getTime();
+	return isTimerElapsed(timerID, currentTime);
+}
+
+void setPosition(float x, float y) {
+	targetX = x;
+	targetY = y;
+	subTargetX = x;
+	subTargetY = y;
+	positionX = x;
+	positionY = y;
+	orthoToPolar(x, y, &positionL, &positionR);
+	testPositionL = positionL;
+	testPositionR = positionR;
+	testPositionX = positionX;
+	testPositionY = positionY;
+}
+
+void processIncomingByte (const byte c)
+{
+	if (isdigit(c))
+	{
+		if(nDecimals <= 0) {
+			currentValue *= 10;
+			currentValue += c - '0';
+		} else {
+			currentValue += pow(10, -nDecimals) * (c - '0');
+			nDecimals++;
+		}
+	}
+	else if(c == '.') {
+		nDecimals = 1;
+	}
+	else
+	{
+		if(parameterIndex != -1) {
+			parameters[parameterIndex] = currentValue;
+		}
+		
+		nDecimals = 0;
+		currentValue = 0;
+
+		switch (c)
+		{
+			case 'X':
+				parameterIndex = 0;
+			break;
+			case 'Y':
+				parameterIndex = 1;
+			break;
+			case 'R':
+				parameterIndex = 2;
+			break;
+			case 'S':
+				parameterIndex = 3;
+			break;
+			case 'G':
+				parameterIndex = 4;
+				commandChar = c;
+			break;
+			case 'M':
+				parameterIndex = 5;
+				commandChar = c;
+			break;
+			case 'P':
+				parameterIndex = 6;
+			break;
+			case '\n':
+				if(commandChar == 'G') {
+					commandType = ACTION;
+				} else if (commandChar == 'M') {
+					commandType = SPECIAL;
+				}
+				if(commandType == ACTION || commandType == SPECIAL) {
+					commandReadyToStart = true;
+				}
+				parameterIndex = -1;
+				commandChar = '0';
+			break;
+			default:
+				parameterIndex = -1;
+			break;
+		}
+	}
+}
+
+bool equals(float a, float b) {
+	return fabs(a - b) <= millimetersPerStep;
+}
+
+void updateMotors() {
+	bool positionChanged = false;
+
+	if(motorNumStepsDoneL < motorNumStepsToDoL && isTimerElapsed(motorTimerL)) {
+		motorStateL = motorStateL == 0 ? 1 : 0;
+		digitalWrite(STEP_L, motorStateL);
+		setTimer(motorTimerL, motorStepLengthL);
+		if(motorStateL == 0) {
+			motorNumStepsDoneL++;
+			positionL += millimetersPerStep * motorDirectionL;
+			positionChanged = true;
+		}
+	}
+
+	if(motorNumStepsDoneR < motorNumStepsToDoR && isTimerElapsed(motorTimerR)) {
+		motorStateR = motorStateR == 0 ? 1 : 0;
+		digitalWrite(STEP_R, motorStateR);
+		setTimer(motorTimerR, motorStepLengthR);
+		if(motorStateR == 0) {
+			motorNumStepsDoneR++;
+			positionR += millimetersPerStep * motorDirectionR;
+			positionChanged = true;
+		}
+	}
+
+	if(positionChanged) {
+		polarToOrtho(positionL, positionR, &positionX, &positionY);
+	}
+
+	if(motorNumStepsDoneL == motorNumStepsToDoL && motorNumStepsDoneR == motorNumStepsToDoR) {
+		positionX = subTargetX;
+		positionY = subTargetY;
+		if(lastPolarStep) {
+			cout << "Position reached: XY: " << positionX << ", " << positionY << " - LR: " << positionL << ", " << positionR <<  endl;
+			cout << "   Test position: XY: " << testPositionX << ", " << testPositionY << " - LR: " << testPositionL << ", " << testPositionR <<  endl;
+			commandDone = true;
+			lastPolarStep = false;
+		} else {
+			cout << "Subposition reached: XY: " << positionX << ", " << positionY << " - LR: " << positionL << ", " << positionR <<  endl;
+			cout << "      Test position: XY: " << testPositionX << ", " << testPositionY << " - LR: " << testPositionL << ", " << testPositionR <<  endl;
+			setTarget(targetX, targetY);
+		}
+	}
+}
+
+void updatePen() {
+	servo.write(servoAngle);
+	cout << "Set servo to " << servoAngle << endl;
+	commandDone = true;
+}
+
+void setPolarTarget(float l, float r) {
+	float deltaL = l - positionL;
+	float deltaR = r - positionR;
+	motorNumStepsToDoL = round(fabs(deltaL) / millimetersPerStep);
+	motorNumStepsToDoR = round(fabs(deltaR) / millimetersPerStep);
+	
+	if(deltaL >= 0 && motorDirectionL != 1) {
+		motorDirectionL = 1;
+		digitalWrite(DIRECTION_L, 1);
+	}
+	else if(deltaL < 0 && motorDirectionL != -1) {
+		motorDirectionL = -1;
+		digitalWrite(DIRECTION_L, 0);
+	}
+	
+	if(deltaR >= 0 && motorDirectionR != 1) {
+		motorDirectionR = 1;
+		digitalWrite(DIRECTION_R, 1);
+	}
+	else if(deltaR < 0 && motorDirectionR != -1) {
+		motorDirectionR = -1;
+		digitalWrite(DIRECTION_R, 0);
+	}
+
+	if(motorNumStepsToDoL <= motorNumStepsToDoR) {
+		motorStepLengthR = 175;
+		motorStepLengthL = motorNumStepsToDoL > 0 ? motorStepLengthR * motorNumStepsToDoR / motorNumStepsToDoL : 0;
+	} else {
+		motorStepLengthL = 175;
+		motorStepLengthR = motorNumStepsToDoR > 0 ? motorStepLengthL * motorNumStepsToDoL / motorNumStepsToDoR : 0;
+	}
+	motorNumStepsDoneL = 0;
+	motorNumStepsDoneR = 0;
+
+	setTimer(motorTimerL, 0);
+	setTimer(motorTimerR, 0);
+	
+	cout << "Set polar target: LR: " << l << ", " << r << endl;
+}
+
+void setTargetDirect(float x, float y) {
+	float targetL = 0.0;
+	float targetR = 0.0;
+	orthoToPolar(x, y, &targetL, &targetR);
+	lastPolarStep = true;
+	targetX = x;
+	targetY = y;
+	subTargetX = x;
+	subTargetY = y;
+	cout << "Set target direct: xy: " << targetX << ", " << targetY << endl;
+	setPolarTarget(targetL, targetR);
+}
+
+void setTarget(float x, float y) {
 
 	float deltaX = x - positionX;
 	float deltaY = y - positionY;
 
 	float distance = sqrt(deltaX * deltaX + deltaY + deltaY);
 
-	int nPolarSteps = distance / int(polarStepDistance);
-	float intDistance = nPolarSteps * polarStepDistance;
+	int numPolarStepsToDo = distance / int(polarStepDistance);
+	lastPolarStep = numPolarStepsToDo == 0;
 
-	float u = deltaX / distance;
-	float v = deltaY / distance;
+	if(numPolarStepsToDo > 0) {
+		float intDistance = numPolarStepsToDo * polarStepDistance;
 
-	float intDestinationX = u * intDistance;
-	float intDestinationY = v * intDistance;
+		float u = deltaX / distance;
+		float v = deltaY / distance;
 
-	float stepX = intDestinationX / nPolarSteps;
-	float stepY = intDestinationY / nPolarSteps;
+		float intDestinationX = u * intDistance;
+		float intDestinationY = v * intDistance;
 
-	float destinationX = positionX;
-	float destinationY = positionY;
+		float stepX = intDestinationX / numPolarStepsToDo;
+		float stepY = intDestinationY / numPolarStepsToDo;
 
-	for(int i=0 ; i<nPolarSteps+1 ; i++) {
-		if(i<nPolarSteps) {
-			destinationX += u * stepX;
-			destinationY += v * stepY;
-		} else {
-			destinationX = x;
-			destinationY = y;
-		}
-		float destinationL = 0;
-		float destinationR = 0;
-		orthoToPolar(destinationX, destinationY, &destinationL, &destinationR);
-		moveToPolar(destinationL, destinationR);
+		subTargetX = positionX + stepX;
+		subTargetY = positionY + stepY;
+	} else {
+		subTargetX = x;
+		subTargetY = y;
 	}
-    positionX = x;
-    positionY = y;
-}
 
-void moveToFast(float x, float y) {
 	float destinationL = 0;
 	float destinationR = 0;
-
-	orthoToPolar(x, y, &destinationL, &destinationR);
-	moveToPolar(destinationL, destinationR);
-    positionX = x;
-    positionY = y;
+	orthoToPolar(subTargetX, subTargetY, &destinationL, &destinationR);
+	cout << "Set target linear: xy: " << targetX << ", " << targetY << endl;
+	cout << "                 : sub-xy: " << subTargetX << ", " << subTargetY << endl;
+	setPolarTarget(destinationL, destinationR);
 }
 
-void setPosition(float x, float y) {
-	positionX = x;
-    positionY = y;
-	orthoToPolar(x, y, &positionL, &positionR);
+// state machine
+
+void readCommand() {
+	while (Serial.available() && !commandReadyToStart) {
+		char c = Serial.read();
+		processIncomingByte(c);
+	}
+}
+
+void startCommand() {
+	commandReadyToStart = false;
+	commandDone = false;
+	int code = -1;
+	if(commandType == ACTION) {
+		code = parameters[4];
+		switch (code) {
+			case 0:
+				
+ 				targetX = parameters[0];
+				targetY = parameters[1];
+				
+				cout << "Start command: move direct to " << targetX << ", " << targetY << endl;
+				
+				setTargetDirect(targetX, targetY);
+
+				command = MOVE_DIRECT;
+			break;
+			case 1:
+				targetX = parameters[0];
+				targetY = parameters[1];
+				
+				cout << "Start command: move linear to " << targetX << ", " << targetY << endl;
+				
+				setTarget(targetX, targetY);
+				command = MOVE_LINEAR;
+			break;
+			// case 2:
+			// 	circleClockWise(x, y, r);
+			// 	break;
+			// case 3:
+			// 	circleCounterClockWise(x, y, r);
+			// 	break;
+			case 4:
+				cout << "Start command: wait " << parameters[6] << endl;
+				setTimer(sleepTimer, parameters[6]);
+				command = WAIT;
+			break;
+			// case 21:
+			// 	setMillimeters();
+			// 	break;
+			// case 90:
+			// 	setAbsolutePosition();
+			// 	break;
+			// case 91:
+			// 	setRelativePosition();
+			// 	break;
+			case 92:
+				cout << "Start command: set position " << parameters[0] << ", " << parameters[1] << endl;
+				setPosition(parameters[0], parameters[1]);
+				command = SET_POSITION;
+				commandDone = true;
+			break;
+			default:
+				Serial.println("Unknown G gcode.");
+		}
+	} else if(commandType == SPECIAL) {
+		code = parameters[5];
+		switch(code) {
+			case 1:
+				// stop();
+			break;
+			case 4:
+				if(parameters[0] > 0) {
+					machineWidth = parameters[0];
+				}
+				if(parameters[3] > 0) {
+					stepsPerRevolution = parameters[3];
+				}
+				if(parameters[6] > 0) {
+					millimetersPerRevolution = parameters[6];
+				}
+				millimetersPerStep = millimetersPerRevolution / stepsPerRevolution;
+				command = SETUP;
+				commandDone = true;
+				cout << "Start command: setup: machineWidth: " << machineWidth<< ", stepsPerRevolution: " << stepsPerRevolution << ", millimetersPerRevolution: " << millimetersPerRevolution << ", millimetersPerSteps: " << millimetersPerStep << endl;
+			break;
+			case 340:
+				servoAngle = parameters[3];
+				command = MOVE_PEN;
+				cout << "Start command: move pen " << servoAngle << endl;
+			break;
+			default:
+				Serial.println("Unknown M gcode.");
+		}
+	}
+	for(int i=0 ; i<NUM_PARAMETERS ; i++) {
+		parameters[i] = -1.0;
+	}
+	Serial.println("ok");
+	cout << endl;
+}
+
+void executeCommand() {
+
+	if(command == MOVE_DIRECT || command == MOVE_LINEAR) {
+		updateMotors();
+	} else if(command == MOVE_PEN){
+		updatePen();
+	} else if(command == WAIT) {
+		if(isTimerElapsed(sleepTimer)) {
+			commandDone = true;
+		}
+	}
+
+	if(commandDone) {
+		command = IDLE;
+	}
+}
+
+void loop ()
+{
+	if(!commandReadyToStart) {
+		readCommand();
+	}
+
+	if(commandReadyToStart && commandDone) {
+		startCommand();
+	}
+
+	if(!commandDone) {
+		executeCommand();
+	}
 }

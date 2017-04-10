@@ -19,6 +19,7 @@
 */
 
 #include <iostream>
+#include <climits>
 #include <math.h>
 
 using namespace std;
@@ -39,6 +40,13 @@ unsigned long millis(){
   return 0;
 }
 
+std::chrono::high_resolution_clock::time_point start = std::chrono::high_resolution_clock::now();
+
+unsigned long micros(){
+	std::chrono::high_resolution_clock::duration elapsed = std::chrono::high_resolution_clock::now() - start;
+	return std::chrono::duration_cast<std::chrono::microseconds>(elapsed).count();
+}
+
 // WMath.cpp
 long map(long, long, long, long, long);
 
@@ -47,7 +55,7 @@ void initialize_mock_arduino();
 void pinMode(int pin, int mode){
   cout << "Set pin " << pin << " to mode " << mode << endl;
 }
-void digitalWrite(int pin, int value) {
-   cout << "Digital write: pin: " << pin << ", value: " << value << endl;
-}
+//void digitalWrite(int pin, int value) {
+//   cout << "Digital write: pin: " << pin << ", value: " << value << endl;
+//}
 #include "fake_serial.h"

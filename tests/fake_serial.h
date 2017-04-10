@@ -20,11 +20,26 @@
 #pragma once
 
 #include <iostream>
+#include <string>
 
 using namespace std;
 
 class FakeSerial {
 public:
+	string fakeData;
+	int dataIndex;
+	FakeSerial():dataIndex(0) {
+		
+	}
+	void fakeFeed(string& testCommands){
+		fakeData = testCommands;
+	}
+	bool available() {
+		return dataIndex < fakeData.length();
+	}
+	char read(){
+		return fakeData[dataIndex++];
+	}
   void println(const char * str)
   { 
     cout << str << endl;

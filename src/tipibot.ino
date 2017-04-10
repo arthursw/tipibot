@@ -1,3 +1,4 @@
+// #include "mock_arduino.h"
 #include <Servo.h>
 
 int STEP_L = 5;
@@ -7,29 +8,30 @@ int STEP_R = 6;
 int DIRECTION_R = 3;
 
 int ENABLE = 8;
-int SERVO = 9;
+int SERVO = 25;
 
 float machineWidth = 2000;
 float stepsPerRevolution = 200;
 float millimetersPerRevolution = 96;
 float millimetersPerStep = millimetersPerRevolution / stepsPerRevolution;
 
-float wakeTime = 0.0;
+int sleepTimer = 0;
 
 float positionL = 0;
 float positionR = 0;
 float positionX = 0;
 float positionY = 0;
 
+float servoAngle = 0;
+
 float polarStepDistance = 1.0;
 
 Servo servo;
 
-
-typedef enum {  NONE, MOVE_DIRECT, MOVE_LINEAR, MOVE_PEN, WAIT, SET_POSITION, SETUP } Commands;
+typedef enum {  IDLE, MOVE_DIRECT, MOVE_LINEAR, MOVE_PEN, WAIT, SET_POSITION, SETUP } Commands;
 typedef enum {  NONE, ACTION, SPECIAL } CommandTypes;
 
-Commands command = NONE;
+Commands command = IDLE;
 CommandTypes commandType = NONE;
 
 bool commandReadyToStart = false;
@@ -38,21 +40,20 @@ bool commandDone = true;
 char commandChar = '0';
 
 const unsigned int NUM_PARAMETERS = 7;
-float[NUM_PARAMETERS] parameters;
+float parameters[NUM_PARAMETERS];
+int parameterIndex = -1;
 
 float currentValue = 0.0;
 int nDecimals = 0;
 
-unsigned long lastTime = 0;
-
-unsigned long nextChangeL = 0;
-unsigned long nextChangeR = 0;
-
 int motorStateL = 0;
 int motorStateR = 0;
 
-int motorStepLengthL = 350;
-int motorStepLengthR = 350;
+int motorTimerL = 0;
+int motorTimerR = 0;
+
+int motorStepLengthL = 0;
+int motorStepLengthR = 0;
 
 int motorNumStepsDoneL = 0;
 int motorNumStepsDoneR = 0;
@@ -66,8 +67,65 @@ int motorDirectionR = 0;
 float targetX = 0;
 float targetY = 0;
 
+float subTargetX = 0;
+float subTargetY = 0;
+
+bool lastPolarStep = false;
+//
+// void setup();
+// void orthoToPolar(float x, float y, float* l, float* r);
+// void polarToOrtho(float l, float r, float* x, float* y);
+// unsigned long getTime();
+// int createTimer();
+// void setTimer(int timerID, unsigned long delay);
+// bool isTimerElapsed(int timerID, unsigned long currentTime);
+// bool isTimerElapsed(int timerID);
+// void setPosition(float x, float y);
+// void processIncomingByte (const byte c);
+// bool equals(float a, float b);
+// void updateMotors();
+// void updatePen();
+// void setPolarTarget(float l, float r);
+// void setTargetDirect(float x, float y);
+// void setTarget(float x, float y);
+// void readCommand();
+// void startCommand();
+// void executeCommand();
+// void loop();
+//
+// string testCommands = "G4 P0\nM340 P3 S0\nM340 P3 S1500\nG92 X1150.0512 Y1975.0\nG0 X1125.0 Y1900.0\nG1 X1025.0 Y1800.0\nG90\n";
+//
+// float testPositionL = 0;
+// float testPositionR = 0;
+// float testPositionX = 0;
+// float testPositionY = 0;
+//
+// void digitalWrite(int pin, int value) {
+//    if(pin == STEP_L && value == 0) {
+// 	   testPositionL += millimetersPerStep * motorDirectionL;
+//    }
+//    if(pin == STEP_R && value == 0) {
+// 	   testPositionR += millimetersPerStep * motorDirectionR;
+//    }
+//    if(pin == STEP_L || pin == STEP_R){
+// 		polarToOrtho(testPositionL, testPositionR, &testPositionX, &testPositionY);
+//    }
+// }
+//
+// int main() {
+//
+//     setup();
+// 	Serial.fakeFeed(testCommands);
+// 	for(int i=0 ; i<10000000 ; i++) {
+// 		loop();
+// 	}
+//     return 0;
+// }
 
 void setup() {
+	commandReadyToStart = false;
+	commandDone = true;
+
 	pinMode(ENABLE, OUTPUT);
 	digitalWrite(ENABLE, 0);
 
@@ -80,6 +138,10 @@ void setup() {
 
 	Serial.begin(115200);
 	Serial.println("Tipibot ready.");
+
+	motorTimerL = createTimer();
+	motorTimerR = createTimer();
+	sleepTimer = createTimer();
 }
 
 void orthoToPolar(float x, float y, float* l, float* r) {
@@ -100,7 +162,52 @@ void polarToOrtho(float l, float r, float* x, float* y) {
 	*y = sqrt(l2 - x2);
 }
 
+const unsigned int NUM_TIMERS = 5;
+unsigned long timers[NUM_TIMERS];
+bool timerOverflows[NUM_TIMERS];
+unsigned int nTimers = 0;
+unsigned long lastTime = 0;
+
+unsigned long getTime() {
+	unsigned long currentTime = micros();
+	if(lastTime > currentTime) { 	// overflow!
+		for(unsigned int i=0 ; i<NUM_TIMERS ; i++) {
+			timerOverflows[i] = false;
+		}
+	}
+	lastTime = currentTime;
+	return currentTime;
+}
+
+int createTimer() {
+	if(nTimers >= NUM_TIMERS) {
+		return -1;
+	}
+	// initialize timers with overflow to prevent timeout when the timer is not set
+	timerOverflows[nTimers] = true;
+	return nTimers++;
+}
+
+void setTimer(unsigned int timerID, unsigned long delay) {
+	unsigned long currentTime = getTime();
+	timers[timerID] = currentTime + delay;
+	timerOverflows[timerID] = timers[timerID] < currentTime;
+}
+
+bool isTimerElapsed(unsigned int timerID, unsigned long currentTime) {
+	return !timerOverflows[timerID] && currentTime > timers[timerID];
+}
+
+bool isTimerElapsed(int timerID) {
+	unsigned long currentTime = getTime();
+	return isTimerElapsed(timerID, currentTime);
+}
+
 void setPosition(float x, float y) {
+	targetX = x;
+	targetY = y;
+	subTargetX = x;
+	subTargetY = y;
 	positionX = x;
 	positionY = y;
 	orthoToPolar(x, y, &positionL, &positionR);
@@ -123,12 +230,12 @@ void processIncomingByte (const byte c)
 	}
 	else
 	{
-		nDecimals = 0;
-		currentValue = 0;
-
 		if(parameterIndex != -1) {
 			parameters[parameterIndex] = currentValue;
 		}
+
+		nDecimals = 0;
+		currentValue = 0;
 
 		switch (c)
 		{
@@ -174,45 +281,45 @@ void processIncomingByte (const byte c)
 	}
 }
 
-bool equals(float a, float b) {
+bool equals(float a, float b) {
 	return fabs(a - b) <= millimetersPerStep;
 }
 
 void updateMotors() {
-	unsigned long currentTime = micros();
+	bool positionChanged = false;
 
-	if(currentTime >= nextChangeL) {
+	if(motorNumStepsDoneL < motorNumStepsToDoL && isTimerElapsed(motorTimerL)) {
 		motorStateL = motorStateL == 0 ? 1 : 0;
 		digitalWrite(STEP_L, motorStateL);
-		nextChangeL += motorStepLengthL;
+		setTimer(motorTimerL, motorStepLengthL);
 		if(motorStateL == 0) {
 			motorNumStepsDoneL++;
+			positionL += millimetersPerStep * motorDirectionL;
+			positionChanged = true;
 		}
 	}
 
-	if(motorNumStepsDoneL == motorNumStepsToDoL) {
-		positionL += millimetersPerStep * motorNumStepsDoneL * motorDirectionL;
-		polarToOrtho(positionL, positionR, &positionX, &positionY);
-	}
-
-	if(currentTime >= nextChangeR) {
+	if(motorNumStepsDoneR < motorNumStepsToDoR && isTimerElapsed(motorTimerR)) {
 		motorStateR = motorStateR == 0 ? 1 : 0;
 		digitalWrite(STEP_R, motorStateR);
-		nextChangeR += motorStepLengthR;
+		setTimer(motorTimerR, motorStepLengthR);
 		if(motorStateR == 0) {
 			motorNumStepsDoneR++;
 			positionR += millimetersPerStep * motorDirectionR;
+			positionChanged = true;
 		}
 	}
 
-	if(motorNumStepsDoneR == motorNumStepsToDoR) {
-		positionR += millimetersPerStep * motorNumStepsDoneR * motorDirectionR;
+	if(positionChanged) {
 		polarToOrtho(positionL, positionR, &positionX, &positionY);
 	}
 
-	if(motorNumStepsDoneL == motorNumStepsToDoL || motorNumStepsDoneR == motorNumStepsToDoR) {
-		if(equals(positionX, targetX) && equals(positionY, targetY)) {
+	if(motorNumStepsDoneL == motorNumStepsToDoL && motorNumStepsDoneR == motorNumStepsToDoR) {
+		positionX = subTargetX;
+		positionY = subTargetY;
+		if(lastPolarStep) {
 			commandDone = true;
+			lastPolarStep = false;
 		} else {
 			setTarget(targetX, targetY);
 		}
@@ -220,7 +327,7 @@ void updateMotors() {
 }
 
 void updatePen() {
-	servo.write(angle);
+	servo.write(servoAngle);
 	commandDone = true;
 }
 
@@ -230,18 +337,48 @@ void setPolarTarget(float l, float r) {
 	motorNumStepsToDoL = round(fabs(deltaL) / millimetersPerStep);
 	motorNumStepsToDoR = round(fabs(deltaR) / millimetersPerStep);
 
-	motorDirectionL = deltaL >= 0 ? 1 : -1;
-	motorDirectionR = deltaR >= 0 ? 1 : -1;
+	if(deltaL >= 0 && motorDirectionL != 1) {
+		motorDirectionL = 1;
+		digitalWrite(DIRECTION_L, 1);
+	}
+	else if(deltaL < 0 && motorDirectionL != -1) {
+		motorDirectionL = -1;
+		digitalWrite(DIRECTION_L, 0);
+	}
 
-	if(motorNumStepsToDoL <= motorNumStepsToDoR) {
-		motorStepLengthR = 175;
-		motorStepLengthL = motorStepLengthR * motorNumStepsToDoR / motorNumStepsToDoL;
-	} else {
-		motorStepLengthL = 175;
-		motorStepLengthR = motorStepLengthL * motorNumStepsToDoL / motorNumStepsToDoR;
+	if(deltaR >= 0 && motorDirectionR != 1) {
+		motorDirectionR = 1;
+		digitalWrite(DIRECTION_R, 1);
+	}
+	else if(deltaR < 0 && motorDirectionR != -1) {
+		motorDirectionR = -1;
+		digitalWrite(DIRECTION_R, 0);
+	}
+
+	if(motorNumStepsToDoL <= motorNumStepsToDoR) {
+		motorStepLengthR = 350;//175;
+		motorStepLengthL = motorNumStepsToDoL > 0 ? motorStepLengthR * motorNumStepsToDoR / motorNumStepsToDoL : 0;
+	} else {
+		motorStepLengthL = 350;//175;
+		motorStepLengthR = motorNumStepsToDoR > 0 ? motorStepLengthL * motorNumStepsToDoL / motorNumStepsToDoR : 0;
 	}
 	motorNumStepsDoneL = 0;
 	motorNumStepsDoneR = 0;
+
+	setTimer(motorTimerL, 0);
+	setTimer(motorTimerR, 0);
+}
+
+void setTargetDirect(float x, float y) {
+	float targetL = 0.0;
+	float targetR = 0.0;
+	orthoToPolar(x, y, &targetL, &targetR);
+	lastPolarStep = true;
+	targetX = x;
+	targetY = y;
+	subTargetX = x;
+	subTargetY = y;
+	setPolarTarget(targetL, targetR);
 }
 
 void setTarget(float x, float y) {
@@ -251,13 +388,11 @@ void setTarget(float x, float y) {
 
 	float distance = sqrt(deltaX * deltaX + deltaY + deltaY);
 
-	int nPolarSteps = distance / int(polarStepDistance);
+	int numPolarStepsToDo = distance / int(polarStepDistance);
+	lastPolarStep = numPolarStepsToDo == 0;
 
-	float subTargetX = 0;
-	float subTargetY = 0;
-
-	if(nPolarSteps > 0) {
-		float intDistance = nPolarSteps * polarStepDistance;
+	if(numPolarStepsToDo > 0) {
+		float intDistance = numPolarStepsToDo * polarStepDistance;
 
 		float u = deltaX / distance;
 		float v = deltaY / distance;
@@ -265,11 +400,11 @@ void setTarget(float x, float y) {
 		float intDestinationX = u * intDistance;
 		float intDestinationY = v * intDistance;
 
-		float stepX = intDestinationX / nPolarSteps;
-		float stepY = intDestinationY / nPolarSteps;
+		float stepX = intDestinationX / numPolarStepsToDo;
+		float stepY = intDestinationY / numPolarStepsToDo;
 
 		subTargetX = positionX + stepX;
-		subTargetY = positionX + stepY;
+		subTargetY = positionY + stepY;
 	} else {
 		subTargetX = x;
 		subTargetY = y;
@@ -285,23 +420,24 @@ void setTarget(float x, float y) {
 
 void readCommand() {
 	while (Serial.available() && !commandReadyToStart) {
-		processIncomingByte (Serial.read ());
+		char c = Serial.read();
+		processIncomingByte(c);
 	}
 }
 
 void startCommand() {
-	float targetL = 0;
-	float targetR = 0;
+	commandReadyToStart = false;
+	commandDone = false;
 	int code = -1;
-	if(commandType == ACTION) {
+	if(commandType == ACTION) {
 		code = parameters[4];
 		switch (code) {
 			case 0:
-				targetX = parameters[0];
+
+ 				targetX = parameters[0];
 				targetY = parameters[1];
 
-				orthoToPolar(targetX, targetY, &targetL, &targetR);
-				setPolarTarget(targetL, targetR);
+				setTargetDirect(targetX, targetY);
 
 				command = MOVE_DIRECT;
 			break;
@@ -319,7 +455,7 @@ void startCommand() {
 			// 	circleCounterClockWise(x, y, r);
 			// 	break;
 			case 4:
-				wakeTime = micros() + parameters[6];
+				setTimer(sleepTimer, parameters[6]);
 				command = WAIT;
 			break;
 			// case 21:
@@ -332,8 +468,9 @@ void startCommand() {
 			// 	setRelativePosition();
 			// 	break;
 			case 92:
-				setPosition(x, y);
+				setPosition(parameters[0], parameters[1]);
 				command = SET_POSITION;
+				commandDone = true;
 			break;
 			default:
 				Serial.println("Unknown G gcode.");
@@ -359,18 +496,17 @@ void startCommand() {
 				commandDone = true;
 			break;
 			case 340:
-				angle = parameters[3];
+				servoAngle = parameters[3];
 				command = MOVE_PEN;
 			break;
 			default:
 				Serial.println("Unknown M gcode.");
 		}
 	}
-	for(int i=0 ; i<NUM_PARAMETERS ; i++) {
+	for(unsigned int i=0 ; i<NUM_PARAMETERS ; i++) {
 		parameters[i] = -1.0;
 	}
-	commandReadyToStart = false;
-	commandDone = false;
+	Serial.println("ok");
 }
 
 void executeCommand() {
@@ -380,13 +516,13 @@ void executeCommand() {
 	} else if(command == MOVE_PEN){
 		updatePen();
 	} else if(command == WAIT) {
-		if(micros() >= wakeTime) {
+		if(isTimerElapsed(sleepTimer)) {
 			commandDone = true;
 		}
 	}
 
 	if(commandDone) {
-		command = NONE;
+		command = IDLE;
 	}
 }
 

@@ -6,19 +6,19 @@
 ProjectName            :=Tipibot
 ConfigurationName      :=Debug
 WorkspacePath          :=/Users/Arthur/Documents/CodeLite
-ProjectPath            :=/Users/Arthur/Projects/IDLV/Tipibot/TiPiBot/src
+ProjectPath            :=/Users/Arthur/Projects/IDLV/Tipibot/TiPiBot/tests
 IntermediateDirectory  :=./Debug
 OutDir                 := $(IntermediateDirectory)
 CurrentFileName        :=
 CurrentFilePath        :=
 CurrentFileFullPath    :=
 User                   :=Arthur Masson
-Date                   :=28/03/2017
+Date                   :=06/04/2017
 CodeLitePath           :="/Users/Arthur/Library/Application Support/codelite"
-LinkerName             :=g++
-SharedObjectLinkerName :=g++ -dynamiclib -fPIC
+LinkerName             :=clang++
+SharedObjectLinkerName :=clang++ -shared -fPIC
 ObjectSuffix           :=.o
-DependSuffix           :=.o.d
+DependSuffix           :=
 PreprocessSuffix       :=.o.i
 DebugSwitch            :=-gstab
 IncludeSwitch          :=-I
@@ -48,12 +48,12 @@ LibPath                := $(LibraryPathSwitch).
 ## AR, CXX, CC, AS, CXXFLAGS and CFLAGS can be overriden using an environment variables
 ##
 AR       := ar rcus
-CXX      := g++
-CC       := gcc
+CXX      := clang++
+CC       := clang
 CXXFLAGS :=  -g -O0 -Wall $(Preprocessors)
 CFLAGS   :=  -g -O0 -Wall $(Preprocessors)
 ASFLAGS  := 
-AS       := as
+AS       := llvm-as
 
 
 ##
@@ -91,16 +91,11 @@ PreBuild:
 ##
 ## Objects
 ##
-$(IntermediateDirectory)/main.cpp$(ObjectSuffix): main.cpp $(IntermediateDirectory)/main.cpp$(DependSuffix)
-	$(CXX) $(IncludePCH) $(SourceSwitch) "/Users/Arthur/Projects/IDLV/Tipibot/TiPiBot/src/main.cpp" $(CXXFLAGS) $(ObjectSwitch)$(IntermediateDirectory)/main.cpp$(ObjectSuffix) $(IncludePath)
-$(IntermediateDirectory)/main.cpp$(DependSuffix): main.cpp
-	@$(CXX) $(CXXFLAGS) $(IncludePCH) $(IncludePath) -MG -MP -MT$(IntermediateDirectory)/main.cpp$(ObjectSuffix) -MF$(IntermediateDirectory)/main.cpp$(DependSuffix) -MM main.cpp
-
+$(IntermediateDirectory)/main.cpp$(ObjectSuffix): main.cpp 
+	$(CXX) $(IncludePCH) $(SourceSwitch) "/Users/Arthur/Projects/IDLV/Tipibot/TiPiBot/tests/main.cpp" $(CXXFLAGS) $(ObjectSwitch)$(IntermediateDirectory)/main.cpp$(ObjectSuffix) $(IncludePath)
 $(IntermediateDirectory)/main.cpp$(PreprocessSuffix): main.cpp
 	$(CXX) $(CXXFLAGS) $(IncludePCH) $(IncludePath) $(PreprocessOnlySwitch) $(OutputSwitch) $(IntermediateDirectory)/main.cpp$(PreprocessSuffix) main.cpp
 
-
--include $(IntermediateDirectory)/*$(DependSuffix)
 ##
 ## Clean
 ##
